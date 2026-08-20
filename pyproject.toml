@@ -1,5 +1,5 @@
 [project]
-name = "aero-example"
+name = "aero-api-example"
 version = "0.1.0"
 description = "Python scripts for the PEAK platform API"
 requires-python = ">=3.13"
