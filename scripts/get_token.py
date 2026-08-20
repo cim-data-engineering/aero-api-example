@@ -3,10 +3,16 @@
 
 Two ways in. Log in with username and password (the way to get started):
 
-    uv run scripts/get_token.py --login --save       # mint + store the offline token
-    uv run scripts/get_token.py --login --username you@cimenviro.com --totp 123456
+    uv run scripts/get_token.py --login              # echo the offline token, keep it
+    uv run scripts/get_token.py --login --save       # ...or store it for this machine
+    uv run scripts/get_token.py --login --access-token   # the access token instead
 
-or exchange an offline token you already have (what routine runs do):
+--login prints the *offline* token, because that is the part worth keeping. Copy it
+into .env as OFFLINE_TOKEN_ACCESS, or into a file of your own and point
+OFFLINE_TOKEN_FILE at it. --save does that for you at ~/.local/secrets/<tenant>_api,
+which is a POSIX convention — on Windows prefer .env or OFFLINE_TOKEN_FILE.
+
+Then exchange that offline token on every later run (no password involved):
 
     TOKEN=$(uv run scripts/get_token.py)             # token on stdout
     uv run scripts/get_token.py --length             # len=1234, no secret shown
@@ -14,6 +20,8 @@ or exchange an offline token you already have (what routine runs do):
     uv run scripts/get_token.py --token-file ~/.local/secrets/aero_api
     uv run scripts/get_token.py --export             # export PEAK_TOKEN=... for eval
     uv run scripts/get_token.py --claims             # who the token is for
+
+PowerShell: $env:PEAK_TOKEN = (uv run scripts/get_token.py) -- --export is for sh.
 
 With --login, username, password and TOTP code are prompted for unless passed as
 flags or set in PEAK_USERNAME / PEAK_PASSWORD / PEAK_TOTP. The password is never
@@ -72,7 +80,12 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument(
         "--offline-token",
         action="store_true",
-        help="print the minted offline token instead of the access token (--login only)",
+        help="print the minted offline token (the default under --login)",
+    )
+    out.add_argument(
+        "--access-token",
+        action="store_true",
+        help="under --login, print the access token instead of the offline token",
     )
     out.add_argument(
         "--var", default="PEAK_TOKEN", help="variable name for --export (default: PEAK_TOKEN)"
@@ -95,14 +108,15 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
 
-    if args.offline_token and not (args.login or args.username):
+    logging_in = args.login or args.username
+    if args.offline_token and not logging_in:
         parser.error("--offline-token only applies with --login")
-    if args.save and not (args.login or args.username):
+    if args.save and not logging_in:
         parser.error("--save only applies with --login — there is nothing new to save")
 
     offline_token: str | None = None
     try:
-        if args.login or args.username:
+        if logging_in:
             settings = load_login_settings(username=args.username, totp=args.totp)
             token, offline_token = login(settings)
         else:
@@ -143,7 +157,9 @@ def main() -> int:
     elif args.claims:
         json.dump(token.claims(), sys.stdout, indent=2, sort_keys=True)
         print()
-    elif args.offline_token:
+    elif args.offline_token or (logging_in and not args.access_token):
+        # After a login the offline token is the thing worth keeping: the access
+        # token is one cheap exchange away, this is not.
         if not offline_token:
             print("error: the realm returned no refresh token", file=sys.stderr)
             return 1

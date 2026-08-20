@@ -3,67 +3,141 @@
 Python examples for the PEAK platform API (`https://api.cimenviro.com`) — a small
 `peak` package for auth and sites, plus CLI scripts that use it.
 
-Requires Python 3.13+ and [uv](https://docs.astral.sh/uv/).
+Runs on Windows, macOS and Linux. The only prerequisite is
+[uv](https://docs.astral.sh/uv/) — see [Install the prerequisites](#1-install-the-prerequisites).
 
 ## Quick start
 
-```bash
-uv sync                                      # create .venv and install
-uv run scripts/get_token.py --login --save   # log in, store the offline token
-uv run scripts/get_token.py --length         # every later run: no password needed
+```
+uv sync                                 # create .venv, install deps and Python
+uv run scripts/get_token.py --login     # log in; prints your offline token
 ```
 
-The first command prompts for username, password and TOTP code. Everything after
-that reads the stored offline token.
+(no uv yet? see [step 1](#1-install-the-prerequisites))
 
-## 1. Install
+Copy that token into `.env` as `OFFLINE_TOKEN_ACCESS=...`. Every later run needs no
+password:
+
+```
+uv run scripts/get_token.py --length    # len=1234 — auth works
+```
+
+Works the same on Windows, macOS and Linux. The commands below are `bash`/`zsh`;
+see [Windows](#windows) for PowerShell equivalents.
+
+## 1. Install the prerequisites
+
+You need **git**, **uv**, and a **Python 3.13** interpreter — uv installs Python for
+you, so uv is the only real prerequisite.
+
+### uv
+
+**Windows** (PowerShell):
+
+```powershell
+winget install --id=astral-sh.uv -e
+# or, without winget:
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+**macOS**:
 
 ```bash
-uv sync                  # runtime deps
-uv sync --extra dev      # + ruff and pre-commit
-uv run pre-commit install
+brew install uv
+# or:
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
+
+**Linux**:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Open a new terminal afterwards so `uv` is on `PATH`, then check it:
+
+```
+uv --version
+```
+
+### git
+
+Windows: `winget install --id=Git.Git -e`. macOS: `xcode-select --install` (or
+`brew install git`). Linux: your package manager (`apt install git`).
+
+### This repo
+
+```
+git clone git@github.com:cim-data-engineering/aero-api-example.git
+cd aero-api-example
+uv sync
+```
+
+`uv sync` creates `.venv/`, installs the dependencies from `uv.lock`, and downloads
+Python 3.13 if the machine doesn't have it. It does **not** need the venv activated —
+every command below is `uv run …`, which uses `.venv` automatically.
+
+Optional, for working on the code:
+
+```
+uv sync --extra dev        # ruff + pre-commit
+uv run pre-commit install  # run the hooks on commit
+```
+
+Nothing else is required — no `pip install`, no `python -m venv`, no global Python.
 
 ## 2. Create an offline token
 
-The scripts never store your password. Auth is a two-stage OAuth exchange against
-Keycloak:
+Auth is a two-stage OAuth exchange against Keycloak:
 
-- an **offline token** — a long-lived refresh token you mint once and keep on disk,
+- an **offline token** — a long-lived refresh token you mint once and keep,
 - an **access token** — short-lived (24 h on this realm), minted from the offline token
   on each run and cached.
 
-Mint and store the offline token in one step:
+Mint the offline token by logging in. It is printed to stdout; nothing is stored:
+
+```
+uv run scripts/get_token.py --login
+```
+
+It prompts for username, password (not echoed) and TOTP code, then echoes the offline
+token. Keep it in whichever place suits the machine:
+
+```
+# .env in the repo root — simplest, and gitignored
+OFFLINE_TOKEN_ACCESS=eyJhbGciOi…
+```
+
+```
+# or a file of your own, anywhere. Leave the path unquoted in .env so backslashes
+# stay literal; forward slashes work too.
+OFFLINE_TOKEN_FILE=C:\Users\you\peak-token.txt
+```
+
+On macOS and Linux, `--save` writes it to `~/.local/secrets/<tenant>_api` at mode
+`0600` for you, refusing to overwrite without `--force`:
 
 ```bash
 uv run scripts/get_token.py --login --save
+uv run scripts/get_token.py --login --save --token-file ~/.local/secrets/benmax_api
 ```
 
-It prompts for username, password (not echoed) and your TOTP code, logs in with
-`grant_type=password` scoped `openid offline_access`, writes the offline token to
-`~/.local/secrets/aero_api` with mode `0600`, and prints the access token. It refuses
-to overwrite an existing token file unless you add `--force`.
+That path is a POSIX convention and `chmod` cannot express owner-only on Windows, so
+on Windows prefer `.env` or `OFFLINE_TOKEN_FILE`.
 
-Non-interactive, or for a second tenant:
+Non-interactive, credentials from the environment:
 
 ```bash
-uv run scripts/get_token.py --login --username you@cimenviro.com --totp 123456 \
-  --save --token-file ~/.local/secrets/benmax_api
-
-# credentials from the environment instead of prompts
 PEAK_USERNAME=you@cimenviro.com PEAK_PASSWORD=… PEAK_TOTP=123456 \
-  uv run scripts/get_token.py --login --save
+  uv run scripts/get_token.py --login
 ```
 
 There is no `--password` flag on purpose: a password in a flag lands in shell history
 and in the process list. Pass it via `PEAK_PASSWORD` or let it prompt.
 
-`aero_api` is the file the tools read by default. The convention is
-`~/.local/secrets/<tenant>_api`, so a second tenant goes in
-`~/.local/secrets/benmax_api` and is selected with `--tenant benmax`.
-
-To see the offline token rather than save it, use `--offline-token`. The equivalent
-raw call, if you would rather not use the script:
+Under the hood this is `grant_type=password` with `scope=openid offline_access` and a
+`totp` field, which is what makes the returned `refresh_token` long-lived — the raw
+call, if you would rather not use the script:
 
 ```bash
 curl -X POST 'https://login.cimenviro.com/auth/realms/cimenviro/protocol/openid-connect/token' \
@@ -76,10 +150,9 @@ curl -X POST 'https://login.cimenviro.com/auth/realms/cimenviro/protocol/openid-
   --data 'totp=<code>'
 ```
 
-The `refresh_token` in that response **is** the offline token; `offline_access` is what
-makes it long-lived. It stays valid until it is revoked or its Keycloak offline session
-goes idle for longer than the realm allows. When exchanges start failing with
-`invalid_grant`, mint a new one.
+An offline token stays valid until it is revoked or its Keycloak offline session goes
+idle for longer than the realm allows. When exchanges start failing with
+`invalid_grant`, log in again.
 
 ## 3. Configure (optional)
 
@@ -118,8 +191,12 @@ uv run scripts/get_token.py --verbose        # source, client_id, expiry on stde
 uv run scripts/get_token.py --cached         # reuse the cached token if still valid
 uv run scripts/get_token.py --tenant benmax  # ~/.local/secrets/benmax_api
 uv run scripts/get_token.py --token-file ~/.local/secrets/other_api
-uv run scripts/get_token.py --login          # skip the offline token, log in instead
+uv run scripts/get_token.py --login          # log in; prints the OFFLINE token
+uv run scripts/get_token.py --login --access-token   # log in; prints the access token
 ```
+
+`--login` prints the offline token because that is the part worth keeping. Every other
+mode prints the access token.
 
 A fresh token is minted on each run unless you pass `--cached`. Feed it to other
 tools either by substitution or by `eval`:
@@ -170,6 +247,33 @@ with core_client() as api:  # carries the bearer token
 rather than letting the server silently ignore them and return everything. See
 `api-reference.md` for the endpoint's other traps — array filters must repeat the
 key, `site_name` is exact-match, `start_index` caps pages at 25.
+
+## Windows
+
+The Python is portable; only the shell syntax differs. PowerShell equivalents:
+
+```powershell
+uv sync
+uv run scripts/get_token.py --login          # prompts, echoes the offline token
+
+# capture an access token into a variable
+$env:PEAK_TOKEN = uv run scripts/get_token.py
+
+# use it
+curl.exe -H "Authorization: Bearer $env:PEAK_TOKEN" https://api.cimenviro.com/sites
+
+# credentials without prompts
+$env:PEAK_USERNAME = 'you@cimenviro.com'; $env:PEAK_PASSWORD = '…'
+uv run scripts/get_token.py --login
+```
+
+Notes:
+
+- `--export` and `eval` are `sh` constructs. In PowerShell assign to `$env:` as above.
+- Put the offline token in `.env` (`OFFLINE_TOKEN_ACCESS=…`) or point
+  `OFFLINE_TOKEN_FILE` at a file. `--save` still works, but its `~/.local/secrets`
+  path and `0600` mode are POSIX conventions — the mode is not applied on Windows.
+- The access-token cache (`.peak/`) works unchanged.
 
 ## Troubleshooting
 

@@ -172,13 +172,19 @@ def _prompt(label: str, *, secret: bool = False) -> str:
 
 
 def write_token_file(path: Path, token: str, *, overwrite: bool = False) -> Path:
-    """Write an offline token to *path*, owner-readable only."""
+    """Write an offline token to *path*, owner-readable only where the OS allows.
+
+    On Windows ``chmod`` cannot express owner-only, so the file is written with
+    whatever the directory grants — put it somewhere already private, or keep the
+    token in ``.env`` instead.
+    """
     path = Path(path).expanduser()
     if path.exists() and not overwrite:
         raise ConfigError(f"{path} already exists — pass --force to replace it")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(token + "\n")
-    path.chmod(0o600)
+    if os.name == "posix":
+        path.chmod(0o600)
     return path
 
 

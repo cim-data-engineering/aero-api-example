@@ -6,7 +6,9 @@ getting-started guide — read it before changing anything about auth.
 
 ## Tooling
 
-- `uv` only — `uv sync`, `uv run <script>`, `uv add <pkg>`. Never `pip install`.
+- `uv` only — `uv sync`, `uv run <script>`, `uv add <pkg>`. Never `pip install`, never
+  `python -m venv`, and don't tell anyone to activate `.venv`: `uv run` handles it.
+  `uv sync` also fetches Python 3.13 itself, so that is not a prerequisite either.
 - `uv run ruff check .` and `uv run ruff format .` before committing. Pre-commit runs
   both, plus `uv-lock` and commitizen on the message.
 - Target is **Python 3.13** (`target-version = "py313"`), so `except (A, B):` keeps its
@@ -69,6 +71,19 @@ rather than inferring a schema from one response.
 `peak.sites.SITE_FILTERS` exists because `GET /sites` ignores unknown filters and
 returns everything, which looks like a filter that matched. A new filter must be added
 to that set to be usable.
+
+## Windows is a supported target
+
+Someone runs these on Windows, so keep the Python portable:
+
+- `chmod` cannot express owner-only there — `write_token_file` and the cache writer
+  guard it with `os.name == "posix"`. Don't add an unguarded `chmod`.
+- `~/.local/secrets/<tenant>_api` is a POSIX convention. `.env` and
+  `OFFLINE_TOKEN_FILE` are the portable ways in, which is why `--login` echoes the
+  offline token rather than assuming a place to put it.
+- Keep shell examples in docstrings and README either portable or labelled. `--export`
+  and `eval` are `sh`-only; the PowerShell form is `$env:PEAK_TOKEN = uv run …`.
+- Use `pathlib`, never string paths or `os.path.join` with separators.
 
 ## Script conventions
 

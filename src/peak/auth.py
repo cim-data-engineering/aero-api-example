@@ -77,7 +77,8 @@ def _read_cache(path: Path) -> AccessToken | None:
 def _write_cache(path: Path, token: AccessToken) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"access_token": token.token, "expires_at": token.expires_at}))
-    os.chmod(path, 0o600)
+    if os.name == "posix":  # chmod cannot express owner-only on Windows
+        os.chmod(path, 0o600)
 
 
 def _post_form(settings: Settings, form: dict[str, str], *, timeout: float) -> dict[str, Any]:
