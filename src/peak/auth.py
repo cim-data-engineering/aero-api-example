@@ -1,9 +1,14 @@
-"""OAuth auth against Keycloak: swap the offline token for an access token.
+"""OAuth auth against Keycloak, by either of two grants.
 
-The long-lived ``OFFLINE_TOKEN_ACCESS`` is a Keycloak offline refresh token. Each
-run exchanges it for a short-lived access token (``grant_type=refresh_token``).
-Access tokens are cached on disk so repeated script runs reuse one until it
-nears expiry.
+* ``login`` — ``grant_type=password`` with username, password and (when the account
+  enforces MFA) a TOTP code, scoped ``openid offline_access``. This is how an offline
+  token is minted in the first place: the response carries both an access token and
+  the long-lived refresh token to keep.
+* ``exchange_offline_token`` — ``grant_type=refresh_token`` against a stored offline
+  token, which is what every routine run does. No password involved.
+
+Access tokens are cached on disk so repeated script runs reuse one until it nears
+expiry.
 """
 
 from __future__ import annotations
@@ -19,7 +24,7 @@ from typing import Any
 
 import httpx
 
-from peak.config import Settings, load_settings
+from peak.config import OFFLINE_SCOPE, Settings, load_settings
 
 # Refresh this many seconds before the token actually expires.
 EXPIRY_MARGIN_S = 60
@@ -75,13 +80,8 @@ def _write_cache(path: Path, token: AccessToken) -> None:
     os.chmod(path, 0o600)
 
 
-def exchange_offline_token(settings: Settings, *, timeout: float = 30.0) -> AccessToken:
-    """POST the offline token to Keycloak and return a fresh access token."""
-    form = {
-        "grant_type": "refresh_token",
-        "client_id": settings.client_id,
-        "refresh_token": settings.offline_token,
-    }
+def _post_form(settings: Settings, form: dict[str, str], *, timeout: float) -> dict[str, Any]:
+    """POST a grant to the token endpoint and return the parsed body."""
     if settings.client_secret:
         form["client_secret"] = settings.client_secret
 
@@ -91,19 +91,69 @@ def exchange_offline_token(settings: Settings, *, timeout: float = 30.0) -> Acce
         raise AuthError(f"could not reach {settings.access_token_url}: {exc}") from exc
 
     if response.status_code != 200:
-        raise AuthError(
-            f"token exchange failed with HTTP {response.status_code}: {response.text[:500]}"
-        )
+        detail = response.text[:500]
+        try:
+            error = response.json()
+            detail = f"{error.get('error')}: {error.get('error_description', detail)}"
+        except ValueError:
+            pass
+        raise AuthError(f"token exchange failed with HTTP {response.status_code}: {detail}")
 
     body = response.json()
-    token = body.get("access_token")
-    if not token:
+    if not body.get("access_token"):
         raise AuthError(f"no access_token in response: {json.dumps(body)[:500]}")
+    return body
 
-    # Keycloak may return a rotated refresh token; the offline token in .env stays
-    # valid, so it is deliberately not written back.
+
+def _access_token(body: dict[str, Any]) -> AccessToken:
     expires_in = float(body.get("expires_in", 300))
-    return AccessToken(token=token, expires_at=time.time() + expires_in)
+    return AccessToken(token=body["access_token"], expires_at=time.time() + expires_in)
+
+
+def exchange_offline_token(settings: Settings, *, timeout: float = 30.0) -> AccessToken:
+    """POST the offline token to Keycloak and return a fresh access token."""
+    if not settings.offline_token:
+        raise AuthError("no offline token in settings — use login() for the password grant")
+
+    # Keycloak may return a rotated refresh token; the stored offline token stays
+    # valid, so it is deliberately not written back.
+    body = _post_form(
+        settings,
+        {
+            "grant_type": "refresh_token",
+            "client_id": settings.client_id,
+            "refresh_token": settings.offline_token,
+        },
+        timeout=timeout,
+    )
+    return _access_token(body)
+
+
+def login(
+    settings: Settings, *, scope: str = OFFLINE_SCOPE, timeout: float = 30.0
+) -> tuple[AccessToken, str | None]:
+    """Authenticate with username and password; mint an offline token too.
+
+    Returns the access token and the refresh token from the same response. With
+    ``offline_access`` in *scope* that refresh token is the long-lived offline token
+    to save for later runs — this is how an offline token is created in the first
+    place. ``settings.totp`` is sent when the account enforces MFA.
+    """
+    if not settings.username or not settings.password:
+        raise AuthError("username and password are required for the password grant")
+
+    form = {
+        "grant_type": "password",
+        "client_id": settings.client_id,
+        "username": settings.username,
+        "password": settings.password,
+        "scope": scope,
+    }
+    if settings.totp:
+        form["totp"] = settings.totp
+
+    body = _post_form(settings, form, timeout=timeout)
+    return _access_token(body), body.get("refresh_token")
 
 
 def get_access_token(

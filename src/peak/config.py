@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import getpass
 import hashlib
 import os
-from dataclasses import dataclass
+import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -30,6 +32,10 @@ DEFAULT_ACCESS_TOKEN_URL = (
 )
 DEFAULT_CLIENT_ID = "api-external"
 
+# Scopes for the password grant. offline_access is what makes the returned refresh
+# token long-lived; without it the token dies with the login session.
+OFFLINE_SCOPE = "openid offline_access"
+
 # Where offline (refresh) tokens live when not set inline. One file per tenant,
 # e.g. ~/.local/secrets/aero_api — the file holds the raw token, nothing else.
 SECRETS_DIR = Path("~/.local/secrets").expanduser()
@@ -47,21 +53,33 @@ class ConfigError(RuntimeError):
 
 @dataclass(frozen=True)
 class Settings:
+    """Everything needed for one token exchange.
+
+    Either ``offline_token`` (refresh-token grant) or ``username`` + ``password``
+    (password grant) is set. Secrets carry ``repr=False`` so a settings object in a
+    traceback or log line cannot leak them.
+    """
+
     access_token_url: str
     client_id: str
-    offline_token: str
-    client_secret: str | None = None
-    # Where the offline token came from, for error messages and --verbose output.
+    offline_token: str = field(default="", repr=False)
+    client_secret: str | None = field(default=None, repr=False)
+    username: str | None = None
+    password: str | None = field(default=None, repr=False)
+    # One-time code from the authenticator app, when the account enforces MFA.
+    totp: str | None = field(default=None, repr=False)
+    # Where the credential came from, for error messages and --verbose output.
     token_source: str = "OFFLINE_TOKEN_ACCESS"
 
     @property
     def token_fingerprint(self) -> str:
-        """Short stable digest of the offline token, used to key the token cache.
+        """Short stable digest of the credential, used to key the token cache.
 
-        Keying on the token means switching tenants cannot return a cached access
-        token minted for a different one.
+        Keying on the credential means switching tenants — or users — cannot return
+        a cached access token minted for a different one.
         """
-        return hashlib.sha256(self.offline_token.encode()).hexdigest()[:12]
+        material = self.offline_token or f"password:{self.client_id}:{self.username}"
+        return hashlib.sha256(material.encode()).hexdigest()[:12]
 
     @property
     def cache_path(self) -> Path:
@@ -140,4 +158,71 @@ def load_settings(
         offline_token=offline_token,
         client_secret=os.environ.get("CLIENT_SECRET") or None,
         token_source=source,
+    )
+
+
+def _prompt(label: str, *, secret: bool = False) -> str:
+    """Ask for one value. Returns "" when there is no terminal to ask at."""
+    if not sys.stdin.isatty():
+        return ""
+    try:
+        return getpass.getpass(label) if secret else input(label).strip()
+    except EOFError:
+        return ""
+
+
+def write_token_file(path: Path, token: str, *, overwrite: bool = False) -> Path:
+    """Write an offline token to *path*, owner-readable only."""
+    path = Path(path).expanduser()
+    if path.exists() and not overwrite:
+        raise ConfigError(f"{path} already exists — pass --force to replace it")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(token + "\n")
+    path.chmod(0o600)
+    return path
+
+
+def load_login_settings(
+    env_file: Path | None = None,
+    *,
+    username: str | None = None,
+    password: str | None = None,
+    totp: str | None = None,
+    prompt: bool = True,
+) -> Settings:
+    """Settings for the password grant — no offline token needed.
+
+    Each value comes from the argument, then the environment (``PEAK_USERNAME``,
+    ``PEAK_PASSWORD``, ``PEAK_TOTP``), then a prompt. The password is read without
+    echo and nothing is written to disk, so credentials stay out of shell history
+    and out of ``.env`` unless the caller puts them there.
+    """
+    load_dotenv(env_file or REPO_ROOT / ".env", override=False)
+
+    username = username or os.environ.get("PEAK_USERNAME", "").strip()
+    if not username and prompt:
+        username = _prompt("PEAK username: ")
+    if not username:
+        raise ConfigError("no username — pass --username or set PEAK_USERNAME")
+
+    password = password or os.environ.get("PEAK_PASSWORD", "")
+    if not password and prompt:
+        password = _prompt(f"Password for {username}: ", secret=True)
+    if not password:
+        raise ConfigError("no password — set PEAK_PASSWORD or run interactively")
+
+    # MFA is per-account: blank is valid, and the grant simply fails without a code
+    # if the account requires one.
+    totp = totp or os.environ.get("PEAK_TOTP", "").strip()
+    if not totp and prompt:
+        totp = _prompt("TOTP code (blank if the account has no MFA): ")
+
+    return Settings(
+        access_token_url=_env("ACCESS_TOKEN_URL", DEFAULT_ACCESS_TOKEN_URL),
+        client_id=_env("CLIENT_ID", DEFAULT_CLIENT_ID),
+        client_secret=os.environ.get("CLIENT_SECRET") or None,
+        username=username,
+        password=password,
+        totp=totp or None,
+        token_source=f"password grant as {username}",
     )

@@ -9,11 +9,12 @@ Requires Python 3.13+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 uv sync                                      # create .venv and install
-uv run scripts/get_token.py --length         # prove auth works, print no secret
+uv run scripts/get_token.py --login --save   # log in, store the offline token
+uv run scripts/get_token.py --length         # every later run: no password needed
 ```
 
-That second command needs an offline token. If it says `no offline token found`,
-do step 2 below.
+The first command prompts for username, password and TOTP code. Everything after
+that reads the stored offline token.
 
 ## 1. Install
 
@@ -25,47 +26,60 @@ uv run pre-commit install
 
 ## 2. Create an offline token
 
-The scripts never hold your password. Auth is a two-stage OAuth exchange against
+The scripts never store your password. Auth is a two-stage OAuth exchange against
 Keycloak:
 
 - an **offline token** — a long-lived refresh token you mint once and keep on disk,
 - an **access token** — short-lived (24 h on this realm), minted from the offline token
   on each run and cached.
 
-Mint the offline token with your PEAK username and password:
+Mint and store the offline token in one step:
 
 ```bash
-read -rs -p 'PEAK password: ' PEAK_PASSWORD; echo
-curl -s -X POST https://login.cimenviro.com/auth/realms/cimenviro/protocol/openid-connect/token \
-  -d grant_type=password \
-  -d client_id=api-external \
-  -d scope=offline_access \
-  -d username='you@cimenviro.com' \
-  --data-urlencode "password=$PEAK_PASSWORD" \
-  | python3 -c 'import json,sys; print(json.load(sys.stdin)["refresh_token"])'
-unset PEAK_PASSWORD
+uv run scripts/get_token.py --login --save
 ```
 
-The `refresh_token` in the response **is** the offline token. `scope=offline_access`
-is what makes it long-lived; without it you get an ordinary refresh token that dies
-with the session.
+It prompts for username, password (not echoed) and your TOTP code, logs in with
+`grant_type=password` scoped `openid offline_access`, writes the offline token to
+`~/.local/secrets/aero_api` with mode `0600`, and prints the access token. It refuses
+to overwrite an existing token file unless you add `--force`.
 
-Save it outside the repo, readable only by you:
+Non-interactive, or for a second tenant:
 
 ```bash
-mkdir -p ~/.local/secrets
-# paste the token, then Ctrl-D
-cat > ~/.local/secrets/aero_api
-chmod 600 ~/.local/secrets/aero_api
+uv run scripts/get_token.py --login --username you@cimenviro.com --totp 123456 \
+  --save --token-file ~/.local/secrets/benmax_api
+
+# credentials from the environment instead of prompts
+PEAK_USERNAME=you@cimenviro.com PEAK_PASSWORD=… PEAK_TOTP=123456 \
+  uv run scripts/get_token.py --login --save
 ```
+
+There is no `--password` flag on purpose: a password in a flag lands in shell history
+and in the process list. Pass it via `PEAK_PASSWORD` or let it prompt.
 
 `aero_api` is the file the tools read by default. The convention is
 `~/.local/secrets/<tenant>_api`, so a second tenant goes in
 `~/.local/secrets/benmax_api` and is selected with `--tenant benmax`.
 
-An offline token stays valid until it is revoked or its Keycloak offline session
+To see the offline token rather than save it, use `--offline-token`. The equivalent
+raw call, if you would rather not use the script:
+
+```bash
+curl -X POST 'https://login.cimenviro.com/auth/realms/cimenviro/protocol/openid-connect/token' \
+  --header 'Content-Type: application/x-www-form-urlencoded' \
+  --data 'grant_type=password' \
+  --data 'client_id=api-external' \
+  --data 'scope=openid offline_access' \
+  --data 'username=<username>' \
+  --data 'password=<password>' \
+  --data 'totp=<code>'
+```
+
+The `refresh_token` in that response **is** the offline token; `offline_access` is what
+makes it long-lived. It stays valid until it is revoked or its Keycloak offline session
 goes idle for longer than the realm allows. When exchanges start failing with
-`invalid_grant`, mint a new one with the command above.
+`invalid_grant`, mint a new one.
 
 ## 3. Configure (optional)
 
@@ -80,6 +94,7 @@ only to override something:
 | `ACCESS_TOKEN_URL` | `https://login.cimenviro.com/auth/realms/cimenviro/protocol/openid-connect/token` | a different realm |
 | `CLIENT_ID` | `api-external` | a different client |
 | `CLIENT_SECRET` | — | only for a confidential client |
+| `PEAK_USERNAME` / `PEAK_PASSWORD` / `PEAK_TOTP` | — | `--login` credentials without prompts; for scripted use, not for `.env` |
 
 `.env` is gitignored. Real environment variables win over `.env`.
 
@@ -103,6 +118,7 @@ uv run scripts/get_token.py --verbose        # source, client_id, expiry on stde
 uv run scripts/get_token.py --cached         # reuse the cached token if still valid
 uv run scripts/get_token.py --tenant benmax  # ~/.local/secrets/benmax_api
 uv run scripts/get_token.py --token-file ~/.local/secrets/other_api
+uv run scripts/get_token.py --login          # skip the offline token, log in instead
 ```
 
 A fresh token is minted on each run unless you pass `--cached`. Feed it to other
@@ -145,7 +161,7 @@ written back, so your offline token file stays as you wrote it.
 ```python
 from peak import core_client, fetch_sites, site_summary
 
-with core_client() as api:                      # carries the bearer token
+with core_client() as api:  # carries the bearer token
     for site in fetch_sites(is_active=True, api=api):
         print(site_summary(site))
 ```
@@ -161,5 +177,6 @@ key, `site_name` is exact-match, `start_index` caps pages at 25.
 |---|---|
 | `no offline token found` | step 2 — nothing at `~/.local/secrets/aero_api` and no env var set |
 | `token exchange failed with HTTP 400 … invalid_grant` | offline token revoked or its session went idle; mint a new one |
+| `HTTP 401 … invalid_grant: Invalid user credentials` on `--login` | wrong password, or a missing/stale TOTP code — the realm reports both the same way |
 | `HTTP 401` on an API call, token decodes fine | the token is valid but lacks the permission; check `check_auth.py` realm roles |
 | `unknown site filter(s): …` | filter name not accepted by `GET /sites`; the error lists the valid ones |
