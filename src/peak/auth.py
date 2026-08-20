@@ -19,7 +19,7 @@ from typing import Any
 
 import httpx
 
-from peak.config import TOKEN_CACHE_PATH, Settings, load_settings
+from peak.config import Settings, load_settings
 
 # Refresh this many seconds before the token actually expires.
 EXPIRY_MARGIN_S = 60
@@ -111,15 +111,23 @@ def get_access_token(
     *,
     use_cache: bool = True,
     force_refresh: bool = False,
-    cache_path: Path = TOKEN_CACHE_PATH,
+    cache_path: Path | None = None,
 ) -> AccessToken:
-    """Return a usable access token, from cache when possible."""
+    """Return a usable access token, from cache when possible.
+
+    The cache file is keyed on a digest of the offline token, so several tenants
+    can be used from one checkout without one's access token being served for
+    another.
+    """
+    settings = settings or load_settings()
+    cache_path = cache_path or settings.cache_path
+
     if use_cache and not force_refresh:
         cached = _read_cache(cache_path)
         if cached and cached.is_usable():
             return cached
 
-    token = exchange_offline_token(settings or load_settings())
+    token = exchange_offline_token(settings)
     if use_cache:
         _write_cache(cache_path, token)
     return token
