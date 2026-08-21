@@ -1,4 +1,8 @@
 #!/usr/bin/env python
+# /// script
+# requires-python = ">=3.13"
+# dependencies = ["httpx>=0.28", "python-dotenv>=1.0"]
+# ///
 """Log in to PEAK and print an offline token.
 
     uv run scripts/get_token.py

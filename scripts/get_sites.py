@@ -1,4 +1,8 @@
 #!/usr/bin/env python
+# /// script
+# requires-python = ">=3.13"
+# dependencies = ["httpx>=0.28", "python-dotenv>=1.0"]
+# ///
 """List the active sites, minus the ones parked in one client bucket.
 
     uv run scripts/get_sites.py
