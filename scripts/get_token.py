@@ -7,10 +7,10 @@
 
     uv run scripts/get_token.py
 
-Run this once. It prompts for your username, password and TOTP code, posts them
-to Keycloak, and prints the long-lived refresh token -- the "offline token".
-Copy that into .env as OFFLINE_TOKEN_ACCESS, and get_sites.py can call the API
-without a password from then on.
+Run this once. It prompts for your username, your password, and a TOTP code if
+the account has MFA, posts them to Keycloak, and prints the long-lived refresh
+token -- the "offline token". Copy that into .env as OFFLINE_TOKEN_ACCESS, and
+the other scripts can call the API without a password from then on.
 
 Two fields make the token long-lived rather than session-length:
 
@@ -39,29 +39,31 @@ TOKEN_URL = "https://login.cimenviro.com/auth/realms/cimenviro/protocol/openid-c
 CLIENT_ID = "api-external"
 
 
-def login(username: str, password: str, totp: str) -> str:
+def login(username: str, password: str, totp: str = "") -> str:
     """Post the password grant and return the offline token.
 
     The response also carries an `access_token`, valid for 24 h. This script
     ignores it: get_sites.py mints its own access token from the offline token,
     so the only thing worth keeping is the one long-lived value.
 
-    `totp` is the six-digit code from the authenticator app. Pass an empty string
-    if the account has no MFA -- Keycloak ignores the field when the realm does
-    not ask for a code.
+    `totp` is the six-digit code from the authenticator app, and is optional --
+    leave it out for an account with no MFA.
     """
-    response = httpx.post(
-        TOKEN_URL,
-        data={
-            "grant_type": "password",
-            "client_id": CLIENT_ID,
-            "scope": "openid offline_access",
-            "username": username,
-            "password": password,
-            "totp": totp,
-        },
-        timeout=30,
-    )
+    form = {
+        "grant_type": "password",
+        "client_id": CLIENT_ID,
+        "scope": "openid offline_access",
+        "username": username,
+        "password": password,
+    }
+
+    # Send `totp` only when there is a code. An empty field is not the same as no
+    # field: a realm that asks for a code reads the blank as a wrong code, and one
+    # that does not ask has no use for it either way.
+    if totp:
+        form["totp"] = totp
+
+    response = httpx.post(TOKEN_URL, data=form, timeout=30)
     # Keycloak answers HTTP 401 "invalid_grant: Invalid user credentials" for an
     # unknown username, a wrong password and a stale TOTP code alike, so the
     # error cannot say which of the three it was.
@@ -78,9 +80,10 @@ def main() -> None:
     # as an argument lands in shell history and in the process list.
     password = getpass.getpass(f"Password for {username}: ")
 
-    # Codes last 30 seconds. Read yours immediately before pressing Enter -- an
-    # expired code fails exactly like a wrong password.
-    totp = input("TOTP code (blank if the account has no MFA): ")
+    # Optional: press Enter to skip it if the account has no MFA. Codes last 30
+    # seconds, so read yours immediately before pressing Enter -- an expired code
+    # fails exactly like a wrong password.
+    totp = input("TOTP code (press Enter if the account has no MFA): ").strip()
 
     # Printing the token is the point of this script, but treat it like a
     # password: it authenticates as you until it is revoked. Keep it out of

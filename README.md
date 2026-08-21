@@ -43,9 +43,10 @@ uv run scripts/get_token.py
 ```
 
 It prompts for your PEAK username, your password (not echoed) and a TOTP code
-from your authenticator app, then prints an **offline token** — a refresh token
-that stays valid until it is revoked. Copy it into a file named `.env` in the
-repo root:
+from your authenticator app — press Enter at that prompt if the account has no
+MFA, and the field is left out of the request. It then prints an **offline
+token** — a refresh token that stays valid until it is revoked. Copy it into a
+file named `.env` in the repo root:
 
 ```
 OFFLINE_TOKEN_ACCESS=eyJhbGciOi…
@@ -65,7 +66,7 @@ curl -X POST 'https://login.cimenviro.com/auth/realms/cimenviro/protocol/openid-
   --data 'scope=openid offline_access' \
   --data 'username=<username>' \
   --data 'password=<password>' \
-  --data 'totp=<code>'
+  --data 'totp=<code>'          # omit this line if the account has no MFA
 ```
 
 ## 3. Call the API
