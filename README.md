@@ -5,7 +5,7 @@ Three Python scripts showing how to call the PEAK platform API
 
 | Script | What it does |
 |---|---|
-| `scripts/get_token.py` | logs in with username, password and TOTP code, prints an offline token |
+| `scripts/get_token.py` | logs in with username and password, prints an offline token |
 | `scripts/get_sites.py` | swaps that token for an access token, then calls `GET /sites` |
 | `scripts/get_history.py` | exports gridded point history for every equipment of one type to a CSV |
 
@@ -42,11 +42,9 @@ else and it still runs.
 uv run scripts/get_token.py
 ```
 
-It prompts for your PEAK username, your password (not echoed) and a TOTP code
-from your authenticator app — press Enter at that prompt if the account has no
-MFA, and the field is left out of the request. It then prints an **offline
-token** — a refresh token that stays valid until it is revoked. Copy it into a
-file named `.env` in the repo root:
+It prompts for your PEAK username and your password (not echoed), then prints an
+**offline token** — a refresh token that stays valid until it is revoked. Copy it
+into a file named `.env` in the repo root:
 
 ```
 OFFLINE_TOKEN_ACCESS=eyJhbGciOi…
@@ -65,8 +63,7 @@ curl -X POST 'https://login.cimenviro.com/auth/realms/cimenviro/protocol/openid-
   --data 'client_id=api-external' \
   --data 'scope=openid offline_access' \
   --data 'username=<username>' \
-  --data 'password=<password>' \
-  --data 'totp=<code>'          # omit this line if the account has no MFA
+  --data 'password=<password>'
 ```
 
 ## 3. Call the API
@@ -170,7 +167,7 @@ uv run scripts\get_history.py --site "110 N Wacker" --type "Chiller" --metadata 
 
 | Symptom | Cause |
 |---|---|
-| `login failed: HTTP 401 … Invalid user credentials` | wrong username or password, or a stale TOTP code — the realm reports all three the same way. Read the code immediately before pressing Enter |
+| `login failed: HTTP 401 … Invalid user credentials` | wrong username or password — the realm reports both the same way |
 | `token exchange failed: HTTP 400 … invalid_grant` | the offline token was revoked or its session went idle — run `get_token.py` again |
 | `no OFFLINE_TOKEN_ACCESS in .env` | step 2 — the `.env` file is missing or the line is misspelt |
 | `GET /sites failed: HTTP 401` | the token is valid but the account lacks permission for the endpoint |
