@@ -176,14 +176,16 @@ def find_site(access_token: str, site_name: str) -> dict:
 def find_metadata_type(access_token: str, type_name: str) -> dict:
     """Step 3: the equipment type, e.g. "Air Handling Units" -> type_id 6.
 
-    Exact match again, and the names are plural: "Air Handling Units", not "Air
-    Handling Unit" (which returns nothing).
+    Exact match again, and plurality is per-type, not a rule: "Air Handling
+    Units" is plural and "Air Handling Unit" returns nothing, but "Chiller" and
+    "Boiler" are singular. Only 22 of the 97 names end in "s" (verified
+    2026-08-21), so the name has to be read off the list rather than guessed.
     """
     types = api_get(access_token, "/metadata_types", {"type": type_name})["metadata_types"]
     if not types:
         raise SystemExit(
-            f"no equipment type named {type_name!r} -- the names are plural and the "
-            'match is exact, e.g. "Air Handling Units", "Chiller", "Cooling Tower"'
+            f"no equipment type named {type_name!r} -- the match is exact, and some "
+            'names are plural while others are not: "Air Handling Units", "Chiller"'
         )
     return types[0]
 

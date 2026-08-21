@@ -176,6 +176,6 @@ uv run scripts\get_history.py --site "110 N Wacker" --type "Chiller" --metadata 
 | `GET /sites failed: HTTP 504` | the API gateway timed out — the unfiltered query is slow; add a filter such as `params={"site_ids": [411]}` |
 | `GET /history failed: HTTP 414` | too many `fav_ids` in one URL — lower `FAV_BATCH` in `get_history.py` (100 is proven, 500 fails) |
 | `GET /history failed: HTTP 504` | too many rows in one request — lower `WINDOW_DAYS`. Don't retry a 504; it will time out again |
-| `no active site named …` / `no equipment type named …` | these filters are exact matches, and the type names are plural (`Air Handling Units`) |
+| `no active site named …` / `no equipment type named …` | these filters are exact matches, and type names are inconsistently pluralised — `Air Handling Units` but `Chiller` |
 | `warning: no point named …` | the API drops metadata names it doesn't recognise instead of failing — check the spelling against `GET /metadata` |
 | a level or zone in a CSV header is blank | a paged read came back short — `limit` and `start_index` must be sent together or the API silently returns 25 records |

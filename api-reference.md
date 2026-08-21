@@ -133,8 +133,10 @@ true total. `limit=500` on `/zones` returned 206 KB in 1.2 s.
 
 ### Exact-match lookups, and one silent drop
 
-- **`GET /metadata_types?type=` is exact, and the names are plural.**
-  `Air Handling Units` works; `Air Handling Unit` returns `[]`. 97 types visible.
+- **`GET /metadata_types?type=` is exact, and plurality is per-name.**
+  `Air Handling Units` works and `Air Handling Unit` returns `[]`, but `Chiller`
+  and `Boiler` are singular. Of the 97 names visible, 22 end in `s` — read the
+  list rather than guessing.
 - **`GET /metadata?type_id=&metadata_names=a&metadata_names=b` drops names it
   does not recognise** — HTTP 200, fewer records, no message. Diff the request
   against the response or a typo becomes a missing column. The record carries
