@@ -1,71 +1,24 @@
 # aero-api-example
 
-Python examples for the PEAK platform API (`https://api.cimenviro.com`) — a small
-`peak` package for auth and sites, plus CLI scripts that use it.
+Two Python scripts showing how to call the PEAK platform API
+(`https://api.cimenviro.com`):
 
-Runs on Windows, macOS and Linux. The only prerequisite is
-[uv](https://docs.astral.sh/uv/) — see [Install the prerequisites](#1-install-the-prerequisites).
+| Script | What it does |
+|---|---|
+| `scripts/get_token.py` | logs in with username, password and TOTP code, prints an offline token |
+| `scripts/get_sites.py` | swaps that token for an access token, then calls `GET /sites` |
 
-## Quick start
+Each script is standalone — read it top to bottom and copy it into your own code.
+Runs on Windows, macOS and Linux; the only prerequisite is
+[uv](https://docs.astral.sh/uv/).
 
-```
-uv sync                                 # create .venv, install deps and Python
-uv run scripts/get_token.py --login     # log in; prints your offline token
-```
+## 1. Install uv
 
-(no uv yet? see [step 1](#1-install-the-prerequisites))
+**Windows** (PowerShell): `winget install --id=astral-sh.uv -e`
+**macOS**: `brew install uv`
+**Linux**: `curl -LsSf https://astral.sh/uv/install.sh | sh`
 
-Copy that token into `.env` as `OFFLINE_TOKEN_ACCESS=...`. Every later run needs no
-password:
-
-```
-uv run scripts/get_token.py --length    # len=1234 — auth works
-```
-
-Works the same on Windows, macOS and Linux. The commands below are `bash`/`zsh`;
-see [Windows](#windows) for PowerShell equivalents.
-
-## 1. Install the prerequisites
-
-You need **git**, **uv**, and a **Python 3.13** interpreter — uv installs Python for
-you, so uv is the only real prerequisite.
-
-### uv
-
-**Windows** (PowerShell):
-
-```powershell
-winget install --id=astral-sh.uv -e
-# or, without winget:
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
-
-**macOS**:
-
-```bash
-brew install uv
-# or:
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-**Linux**:
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-Open a new terminal afterwards so `uv` is on `PATH`, then check it:
-
-```
-uv --version
-```
-
-### git
-
-Windows: `winget install --id=Git.Git -e`. macOS: `xcode-select --install` (or
-`brew install git`). Linux: your package manager (`apt install git`).
-
-### This repo
+Open a new terminal so `uv` is on `PATH`, then:
 
 ```
 git clone git@github.com:cim-data-engineering/aero-api-example.git
@@ -73,71 +26,30 @@ cd aero-api-example
 uv sync
 ```
 
-`uv sync` creates `.venv/`, installs the dependencies from `uv.lock`, and downloads
-Python 3.13 if the machine doesn't have it. It does **not** need the venv activated —
-every command below is `uv run …`, which uses `.venv` automatically.
+`uv sync` creates `.venv`, installs `httpx` and `python-dotenv`, and downloads
+Python itself if the machine doesn't have it. Every command below is `uv run …`,
+which uses `.venv` for you — no activating, no `pip install`.
 
-Optional, for working on the code:
-
-```
-uv sync --extra dev        # ruff + pre-commit
-uv run pre-commit install  # run the hooks on commit
-```
-
-Nothing else is required — no `pip install`, no `python -m venv`, no global Python.
-
-## 2. Create an offline token
-
-Auth is a two-stage OAuth exchange against Keycloak:
-
-- an **offline token** — a long-lived refresh token you mint once and keep,
-- an **access token** — short-lived (24 h on this realm), minted from the offline token
-  on each run and cached.
-
-Mint the offline token by logging in. It is printed to stdout; nothing is stored:
+## 2. Get an offline token
 
 ```
-uv run scripts/get_token.py --login
+uv run scripts/get_token.py
 ```
 
-It prompts for username, password (not echoed) and TOTP code, then echoes the offline
-token. Keep it in whichever place suits the machine:
+It prompts for your PEAK username, your password (not echoed) and a TOTP code
+from your authenticator app, then prints an **offline token** — a refresh token
+that stays valid until it is revoked. Copy it into a file named `.env` in the
+repo root:
 
 ```
-# .env in the repo root — simplest, and gitignored
 OFFLINE_TOKEN_ACCESS=eyJhbGciOi…
 ```
 
-```
-# or a file of your own, anywhere. Leave the path unquoted in .env so backslashes
-# stay literal; forward slashes work too.
-OFFLINE_TOKEN_FILE=C:\Users\you\peak-token.txt
-```
+`.env` is gitignored. Treat the token like a password: it is enough to call the
+API as you, so don't commit it or paste it into a chat.
 
-On macOS and Linux, `--save` writes it to `~/.local/secrets/<tenant>_api` at mode
-`0600` for you, refusing to overwrite without `--force`:
-
-```bash
-uv run scripts/get_token.py --login --save
-uv run scripts/get_token.py --login --save --token-file ~/.local/secrets/benmax_api
-```
-
-That path is a POSIX convention and `chmod` cannot express owner-only on Windows, so
-on Windows prefer `.env` or `OFFLINE_TOKEN_FILE`.
-
-Non-interactive, credentials from the environment:
-
-```bash
-PEAK_USERNAME=you@cimenviro.com PEAK_PASSWORD=… PEAK_TOTP=123456 \
-  uv run scripts/get_token.py --login
-```
-
-There is no `--password` flag on purpose: a password in a flag lands in shell history
-and in the process list. Pass it via `PEAK_PASSWORD` or let it prompt.
-
-Under the hood this is `grant_type=password` with `scope=openid offline_access` and a
-`totp` field, which is what makes the returned `refresh_token` long-lived — the raw
-call, if you would rather not use the script:
+This is `grant_type=password` with `scope=openid offline_access` — the same call
+as:
 
 ```bash
 curl -X POST 'https://login.cimenviro.com/auth/realms/cimenviro/protocol/openid-connect/token' \
@@ -150,137 +62,45 @@ curl -X POST 'https://login.cimenviro.com/auth/realms/cimenviro/protocol/openid-
   --data 'totp=<code>'
 ```
 
-An offline token stays valid until it is revoked or its Keycloak offline session goes
-idle for longer than the realm allows. When exchanges start failing with
-`invalid_grant`, log in again.
+## 3. Call the API
 
-## 3. Configure (optional)
-
-With the token in `~/.local/secrets/aero_api`, **no `.env` is needed** — the realm
-URL and client id are not secrets and default in code. Copy `.env.example` to `.env`
-only to override something:
-
-| Variable | Default | Use |
-|---|---|---|
-| `OFFLINE_TOKEN_FILE` | — | read the offline token from this path |
-| `OFFLINE_TOKEN_ACCESS` | — | the offline token inline (prefer the file — it can't be committed by accident) |
-| `ACCESS_TOKEN_URL` | `https://login.cimenviro.com/auth/realms/cimenviro/protocol/openid-connect/token` | a different realm |
-| `CLIENT_ID` | `api-external` | a different client |
-| `CLIENT_SECRET` | — | only for a confidential client |
-| `PEAK_USERNAME` / `PEAK_PASSWORD` / `PEAK_TOTP` | — | `--login` credentials without prompts; for scripted use, not for `.env` |
-
-`.env` is gitignored. Real environment variables win over `.env`.
-
-The offline token is looked for in this order (first hit wins):
-
-1. `token=` passed to `load_settings()`
-2. `--token-file PATH` / `token_file=`
-3. `--tenant NAME` / `tenant=` → `~/.local/secrets/<name>_api`
-4. `OFFLINE_TOKEN_ACCESS`
-5. `OFFLINE_TOKEN_FILE`
-6. `~/.local/secrets/aero_api`
-
-## 4. Get an access token
-
-```bash
-uv run scripts/get_token.py                  # token on stdout
-uv run scripts/get_token.py --length         # len=1234 — safe in a shared terminal
-uv run scripts/get_token.py --claims         # who the token is for, as JSON
-uv run scripts/get_token.py --json           # token + expiry + source
-uv run scripts/get_token.py --verbose        # source, client_id, expiry on stderr
-uv run scripts/get_token.py --cached         # reuse the cached token if still valid
-uv run scripts/get_token.py --tenant benmax  # ~/.local/secrets/benmax_api
-uv run scripts/get_token.py --token-file ~/.local/secrets/other_api
-uv run scripts/get_token.py --login          # log in; prints the OFFLINE token
-uv run scripts/get_token.py --login --access-token   # log in; prints the access token
+```
+uv run scripts/get_sites.py
 ```
 
-`--login` prints the offline token because that is the part worth keeping. Every other
-mode prints the access token.
+It prints one line per site:
 
-A fresh token is minted on each run unless you pass `--cached`. Feed it to other
-tools either by substitution or by `eval`:
-
-```bash
-TOKEN=$(uv run scripts/get_token.py)
-curl -s -H "Authorization: Bearer $TOKEN" 'https://api.cimenviro.com/sites?site_ids=411'
-
-eval "$(uv run scripts/get_token.py --export)"   # sets PEAK_TOKEN
+```
+   411  Example Plaza
+   415  Example Tower
 ```
 
-## 5. The other scripts
+Two steps happen inside: `get_access_token()` posts the offline token back as
+`grant_type=refresh_token` to get a short-lived access token, then `get_sites()`
+sends that as `Authorization: Bearer …` to `GET /sites`. Access tokens last 24 h
+on this realm, so a script mints a fresh one each run rather than storing it.
 
-```bash
-uv run scripts/check_auth.py                 # decode the token, then call the API for real
-uv run scripts/check_auth.py --refresh       # ignore the cache
-uv run scripts/fetch_sites.py --active       # sites as a table
-uv run scripts/fetch_sites.py --state Illinois --csv
-uv run scripts/fetch_sites.py --site-id 411 --json
-uv run scripts/fetch_sites.py --count
-```
-
-`check_auth.py` is the one to run when something is wrong: it prints the subject,
-scope, realm roles and expiry, then does a live `GET /users/permissions/current-user`
-so a well-formed but rejected token is distinguishable from a bad exchange.
-
-## Access-token cache
-
-Cached in `.peak/token-<fingerprint>.json`, mode `0600`, gitignored. The filename
-digests the offline token, so switching tenants can't serve a token minted for
-another one. A cached token is reused until 60 s before it expires. Delete `.peak/`
-to force a fresh exchange.
-
-Keycloak may return a rotated refresh token on exchange; it is deliberately not
-written back, so your offline token file stays as you wrote it.
-
-## Using the package directly
-
-```python
-from peak import core_client, fetch_sites, site_summary
-
-with core_client() as api:  # carries the bearer token
-    for site in fetch_sites(is_active=True, api=api):
-        print(site_summary(site))
-```
-
-`fetch_sites` pages by cursor and rejects filter names the endpoint doesn't accept,
-rather than letting the server silently ignore them and return everything. See
-`api-reference.md` for the endpoint's other traps — array filters must repeat the
-key, `site_name` is exact-match, `start_index` caps pages at 25.
+To call another endpoint, copy `get_sites()` and change the path — the bearer
+header is the only auth involved. `api-reference.md` records what has been
+verified about `GET /sites` itself: which filters work, how paging behaves, and
+which ones the server ignores instead of rejecting.
 
 ## Windows
 
-The Python is portable; only the shell syntax differs. PowerShell equivalents:
+The Python is portable; only the shell differs. In PowerShell:
 
 ```powershell
 uv sync
-uv run scripts/get_token.py --login          # prompts, echoes the offline token
-
-# capture an access token into a variable
-$env:PEAK_TOKEN = uv run scripts/get_token.py
-
-# use it
-curl.exe -H "Authorization: Bearer $env:PEAK_TOKEN" https://api.cimenviro.com/sites
-
-# credentials without prompts
-$env:PEAK_USERNAME = 'you@cimenviro.com'; $env:PEAK_PASSWORD = '…'
-uv run scripts/get_token.py --login
+uv run scripts\get_token.py
+uv run scripts\get_sites.py
 ```
-
-Notes:
-
-- `--export` and `eval` are `sh` constructs. In PowerShell assign to `$env:` as above.
-- Put the offline token in `.env` (`OFFLINE_TOKEN_ACCESS=…`) or point
-  `OFFLINE_TOKEN_FILE` at a file. `--save` still works, but its `~/.local/secrets`
-  path and `0600` mode are POSIX conventions — the mode is not applied on Windows.
-- The access-token cache (`.peak/`) works unchanged.
 
 ## Troubleshooting
 
 | Symptom | Cause |
 |---|---|
-| `no offline token found` | step 2 — nothing at `~/.local/secrets/aero_api` and no env var set |
-| `token exchange failed with HTTP 400 … invalid_grant` | offline token revoked or its session went idle; mint a new one |
-| `HTTP 401 … invalid_grant: Invalid user credentials` on `--login` | wrong password, or a missing/stale TOTP code — the realm reports both the same way |
-| `HTTP 401` on an API call, token decodes fine | the token is valid but lacks the permission; check `check_auth.py` realm roles |
-| `unknown site filter(s): …` | filter name not accepted by `GET /sites`; the error lists the valid ones |
+| `login failed: HTTP 401 … Invalid user credentials` | wrong username or password, or a stale TOTP code — the realm reports all three the same way. Read the code immediately before pressing Enter |
+| `token exchange failed: HTTP 400 … invalid_grant` | the offline token was revoked or its session went idle — run `get_token.py` again |
+| `no OFFLINE_TOKEN_ACCESS in .env` | step 2 — the `.env` file is missing or the line is misspelt |
+| `GET /sites failed: HTTP 401` | the token is valid but the account lacks permission for the endpoint |
+| `GET /sites failed: HTTP 504` | the API gateway timed out — the unfiltered query is slow; add a filter such as `params={"site_ids": [411]}` |
