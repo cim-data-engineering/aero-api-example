@@ -531,7 +531,9 @@ def grid_and_pivot(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        description="Export point history for every equipment of one type, gridded, to a CSV."
+    )
     parser.add_argument("--site", required=True, help="exact site name")
     parser.add_argument("--type", required=True, help="exact equipment type name, e.g. Chiller")
     parser.add_argument("--metadata", required=True, nargs="+", help="exact point name(s)")
