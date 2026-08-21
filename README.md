@@ -124,11 +124,17 @@ Progress goes to stderr, so the run above says what it found:
 
 ```
 site 411 110 N Wacker (America/Chicago)
-31 favourite(s) across 23 Air Handling Units
+31 favourite(s) across 23 Air Handling Units -- lookups took 11.6s
 15 minute grid, 2026-08-19 to 2026-08-20 in 1 window(s)
-  batch 1/1: 2,976 samples
-wrote …csv: 96 rows x 31 point column(s)
+  batch 1/1: 2,976 samples in 1.7s
+2,976 samples in 1.7s
+gridded in 0.0s
+wrote …csv: 96 rows x 31 point column(s) -- 16.3s all up
 ```
+
+The timings are there to show where a slow run goes. Usually it is the lookups,
+not the history: the zone, level and collector lists cover the whole site, so
+they cost the same whether you export one AHU or fifty. Polars barely registers.
 
 Why it takes eleven steps rather than one call: PEAK stores a **favourite** per
 equipment/point pair, and history is fetched by favourite. Turning four names

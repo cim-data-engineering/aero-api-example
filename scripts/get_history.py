@@ -54,6 +54,7 @@ request fail.
 import argparse
 import os
 import sys
+import time
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -368,6 +369,16 @@ def choose_interval_minutes(access_token: str, site_id: int, equipment: list[dic
     return max(minutes)
 
 
+def seconds_since(mark: float) -> str:
+    """How long since a time.monotonic() mark, for the progress lines.
+
+    Worth printing: the lookups and the history fetch fail in different ways, so
+    knowing which one is slow tells you whether to narrow --metadata or lower
+    WINDOW_DAYS. monotonic() rather than time() because it cannot jump backwards.
+    """
+    return f"{time.monotonic() - mark:.1f}s"
+
+
 def utc_string(local_time: datetime, site_zone: ZoneInfo) -> str:
     """A site-local wall-clock time as the UTC instant string the API wants.
 
@@ -413,6 +424,7 @@ def fetch_history(
     done = 0
     for batch in batches:
         for window_start, window_end in windows:
+            batch_started = time.monotonic()
             page = api_get(
                 access_token,
                 "/history",
@@ -425,7 +437,10 @@ def fetch_history(
             )["history"]
             rows.extend(page)
             done += 1
-            print(f"  batch {done}/{total}: {len(page):,} samples", file=sys.stderr)
+            print(
+                f"  batch {done}/{total}: {len(page):,} samples in {seconds_since(batch_started)}",
+                file=sys.stderr,
+            )
     return rows
 
 
@@ -535,6 +550,7 @@ def parse_date(text: str, flag: str) -> datetime:
 
 
 def main() -> None:
+    started = time.monotonic()
     args = parse_args()
 
     start_local = parse_date(args.start, "--start")
@@ -549,6 +565,7 @@ def main() -> None:
 
     access_token = get_access_token(offline_token)
 
+    lookups_started = time.monotonic()
     site = find_site(access_token, args.site)
     site_zone = ZoneInfo(site["timezone"])
     print(f"site {site['site_id']} {site['site_name']} ({site['timezone']})", file=sys.stderr)
@@ -562,7 +579,8 @@ def main() -> None:
     zone_labels = build_zone_labels(access_token, site["site_id"])
     labels = build_labels(favourites, equipment, metadata, zone_labels)
     print(
-        f"{len(labels)} favourite(s) across {len(equipment)} {metadata_type['type']}",
+        f"{len(labels)} favourite(s) across {len(equipment)} {metadata_type['type']}"
+        f" -- lookups took {seconds_since(lookups_started)}",
         file=sys.stderr,
     )
 
@@ -573,18 +591,23 @@ def main() -> None:
         file=sys.stderr,
     )
 
+    fetch_started = time.monotonic()
     rows = fetch_history(access_token, sorted(labels), windows, site_zone)
+    print(f"{len(rows):,} samples in {seconds_since(fetch_started)}", file=sys.stderr)
     if not rows:
         raise SystemExit("no samples in that range -- check the dates, or try a wider one")
 
+    grid_started = time.monotonic()
     table = grid_and_pivot(rows, labels, site["timezone"], start_local, end_local, interval_minutes)
+    print(f"gridded in {seconds_since(grid_started)}", file=sys.stderr)
 
     out_path = args.out or (
         f"{site['site_name']} - {metadata_type['type']} - {args.start} to {args.end}.csv"
     )
     table.write_csv(out_path)
     print(
-        f"wrote {out_path}: {table.height} rows x {table.width - 1} point column(s)",
+        f"wrote {out_path}: {table.height} rows x {table.width - 1} point column(s)"
+        f" -- {seconds_since(started)} all up",
         file=sys.stderr,
     )
 
