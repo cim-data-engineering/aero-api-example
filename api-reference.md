@@ -108,3 +108,67 @@ and 67-75), so the unit is not inferable from `/sites`. It lives on the thermal
 comfort score responses (`ThermalComfortSiteScore.unit` / `unit_id`).
 
 `scripts/get_sites.py` does the cursor loop.
+
+## History export: the chain from names to samples
+
+Verified against the live endpoints, 2026-08-21, building
+`scripts/get_history.py`.
+
+### Paging: send `limit` **and** `start_index` together, always
+
+This is not the `/sites` behaviour above — the other collection endpoints
+(`/equipment`, `/favourites`, `/zones`, `/zone_names`, `/levels`, `/collectors`,
+`/metadata`) get it wrong three different ways:
+
+- **`limit` alone is ignored.** Asked for 10 of 1,061 metadata records, got all
+  1,061.
+- **`start_index` alone caps the page at 25**, whatever `limit` said.
+- **Neither returns 25 records and no total.** `GET /zones?site_id=411` answered
+  with 25 of 885 zones, `response_metadata: null`, HTTP 200. The failure mode is
+  a short list that looks complete — it showed up as blank level names in a CSV
+  header, not as an error.
+
+With both sent, paging behaves and `response_metadata.record_count` carries the
+true total. `limit=500` on `/zones` returned 206 KB in 1.2 s.
+
+### Exact-match lookups, and one silent drop
+
+- **`GET /metadata_types?type=` is exact, and the names are plural.**
+  `Air Handling Units` works; `Air Handling Unit` returns `[]`. 97 types visible.
+- **`GET /metadata?type_id=&metadata_names=a&metadata_names=b` drops names it
+  does not recognise** — HTTP 200, fewer records, no message. Diff the request
+  against the response or a typo becomes a missing column. The record carries
+  `unit` (`°C`, `°F`, `l/s`, `On/Off`), so no `/metadata_units` call is needed.
+- **`GET /favourites` is not guaranteed to return `site_id`** even though the
+  schema lists it, so filter by site server-side. Unfiltered, one site's
+  favourites are 18,220 records / 6 MB / 13 s.
+- Join favourites to equipment on **`canonical_equipment_id`**, not
+  `equipment_id`. They are equal for standalone equipment; canonical points at
+  the parent otherwise, and is what the platform's trend tooling uses.
+
+### `GET /history`: two hard limits and an off-by-one
+
+- **URL length.** `fav_ids` go in the query string, so the batch size is really a
+  URL budget: 100 ids ≈ 2.2 KB works, 250 ≈ 5.5 KB works, **500 ≈ 11 KB is
+  rejected by CloudFront with `414 The request could not be satisfied`** — an
+  HTML body, not the JSON envelope, because the API never sees it.
+- **Row count.** 31 favourites × 15 days = 44,609 rows in 12.9 s, roughly linear.
+  The 30 s gateway limit applies, and as above a 504 must not be retried — ask
+  for less.
+- **`end` is inclusive by default.** With `end` set to a timestamp matching a
+  sample exactly, the default returned that row; `end_exclusive=true` returned 0
+  rows. Send `end_exclusive=true` or consecutive windows double-count the sample
+  on the boundary.
+- **`ts` is UTC with milliseconds** (`2026-08-19T05:00:41.561Z`) and samples do
+  **not** land on grid boundaries — observed `00:00:43.602` and `23:45:18.458` on
+  a 15-minute point. Anything that puts two points on one row has to snap them to
+  a grid first.
+
+### `collection_interval` is `PT15M` or `null`
+
+`GET /collectors?site_id=` returns the polling interval as an ISO-8601 duration.
+Across 209 collectors in this account: 140 `PT15M`, 69 `null`. Nothing else — so
+a parser for `PT<n>M` / `PT<n>H` with a 15-minute default covers the observed
+value space. `null` means the collector does not say, not that it does not poll.
+
+`scripts/get_history.py` does all of the above.

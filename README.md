@@ -1,12 +1,13 @@
 # aero-api-example
 
-Two Python scripts showing how to call the PEAK platform API
+Three Python scripts showing how to call the PEAK platform API
 (`https://api.cimenviro.com`):
 
 | Script | What it does |
 |---|---|
 | `scripts/get_token.py` | logs in with username, password and TOTP code, prints an offline token |
 | `scripts/get_sites.py` | swaps that token for an access token, then calls `GET /sites` |
+| `scripts/get_history.py` | exports gridded point history for every equipment of one type to a CSV |
 
 Each script is standalone — read it top to bottom and copy it into your own code.
 Runs on Windows, macOS and Linux; the only prerequisite is
@@ -26,9 +27,14 @@ cd aero-api-example
 uv sync
 ```
 
-`uv sync` creates `.venv`, installs `httpx` and `python-dotenv`, and downloads
-Python itself if the machine doesn't have it. Every command below is `uv run …`,
+`uv sync` creates `.venv`, installs `httpx`, `polars` and `python-dotenv`, and
+downloads Python itself if the machine doesn't have it. Every command below is `uv run …`,
 which uses `.venv` for you — no activating, no `pip install`.
+
+Each script also declares its own dependencies in a `# /// script` header, so
+`uv run scripts/get_sites.py` works on a machine that never ran `uv sync` — uv
+reads the header and builds a throwaway environment. Copy a script somewhere
+else and it still runs.
 
 ## 2. Get an offline token
 
@@ -96,6 +102,52 @@ the top of `api-reference.md`; don't guess them. That file also records what the
 schema doesn't say: `limit=25` is what `GET /sites` reliably answers (bigger pages
 time out), array filters must repeat the key, and `site_name` is exact-match.
 
+## 4. Export some history
+
+One line, so it copies and pastes into any shell:
+
+```
+uv run scripts/get_history.py --site "110 N Wacker" --type "Air Handling Units" --metadata "Unit Supply Air Temperature (Fahrenheit)" "Unit Return Air Temperature (Fahrenheit)" --start 2026-08-19 --end 2026-08-20
+```
+
+`--start` is inclusive, `--end` exclusive, and both are dates in the **site's own
+timezone**. `--out` names the file; without it the name is built from the
+arguments. One row per timestamp, one column per equipment and point:
+
+```
+Timestamp (America/Chicago),"AHU-23.S, Unit Return Air Temperature (Fahrenheit), °F, Building, 4 to 37"
+2026-08-19 00:00,74.228
+2026-08-19 00:15,74.299995
+```
+
+Progress goes to stderr, so the run above says what it found:
+
+```
+site 411 110 N Wacker (America/Chicago)
+31 favourite(s) across 23 Air Handling Units
+15 minute grid, 2026-08-19 to 2026-08-20 in 1 window(s)
+  batch 1/1: 2,976 samples
+wrote …csv: 96 rows x 31 point column(s)
+```
+
+Why it takes eleven steps rather than one call: PEAK stores a **favourite** per
+equipment/point pair, and history is fetched by favourite. Turning four names
+into a list of `fav_id`s means looking up the site, the equipment type, the
+points, the equipment, and the favourites on it — then the zones and levels for
+the column headers, and the collectors for the grid interval. Each of those is
+one function in the file, in the order `main()` calls them.
+
+Two details that are easy to get wrong, both explained in the file:
+
+- **Samples do not land on the quarter hour.** A 15-minute point reports at
+  `00:00:43.602`. Polars snaps each sample to the nearest slot and keeps the
+  latest one per slot — averaging would invent readings.
+- **The grid is built in the site's local time, then the timezone is dropped.**
+  That is what makes midnight mean midnight on the day the clocks change.
+
+Change `build_labels()` for a different column header, or replace the last two
+lines of `main()` to keep the DataFrame instead of writing a CSV.
+
 ## Windows
 
 The Python is portable; only the shell differs. In PowerShell:
@@ -104,6 +156,7 @@ The Python is portable; only the shell differs. In PowerShell:
 uv sync
 uv run scripts\get_token.py
 uv run scripts\get_sites.py
+uv run scripts\get_history.py --site "110 N Wacker" --type "Chiller" --metadata "Chilled Water Entering Temperature" --start 2026-08-19 --end 2026-08-20
 ```
 
 ## Troubleshooting
@@ -115,3 +168,8 @@ uv run scripts\get_sites.py
 | `no OFFLINE_TOKEN_ACCESS in .env` | step 2 — the `.env` file is missing or the line is misspelt |
 | `GET /sites failed: HTTP 401` | the token is valid but the account lacks permission for the endpoint |
 | `GET /sites failed: HTTP 504` | the API gateway timed out — the unfiltered query is slow; add a filter such as `params={"site_ids": [411]}` |
+| `GET /history failed: HTTP 414` | too many `fav_ids` in one URL — lower `FAV_BATCH` in `get_history.py` (100 is proven, 500 fails) |
+| `GET /history failed: HTTP 504` | too many rows in one request — lower `WINDOW_DAYS`. Don't retry a 504; it will time out again |
+| `no active site named …` / `no equipment type named …` | these filters are exact matches, and the type names are plural (`Air Handling Units`) |
+| `warning: no point named …` | the API drops metadata names it doesn't recognise instead of failing — check the spelling against `GET /metadata` |
+| a level or zone in a CSV header is blank | a paged read came back short — `limit` and `start_index` must be sent together or the API silently returns 25 records |
