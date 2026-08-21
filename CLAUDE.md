@@ -43,9 +43,3 @@ date).
 Do not guess field names: the live Swagger JSON is authoritative and listed there
 (`https://api.cimenviro.com/swagger.json`). Fetch it rather than inferring a
 schema from one response.
-
-## Git
-
-Remote is `git@github.com:cim-data-engineering/aero-api-example.git` (GitHub, so
-`gh` not `bb`). Branch off `main`; never commit to it directly. Conventional
-Commits — `feat`, `fix`, `refactor`, `chore`, `docs`.

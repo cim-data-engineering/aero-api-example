@@ -21,7 +21,7 @@ Runs on Windows, macOS and Linux; the only prerequisite is
 Open a new terminal so `uv` is on `PATH`, then:
 
 ```
-git clone git@github.com:cim-data-engineering/aero-api-example.git
+git clone https://github.com/cim-data-engineering/aero-api-example.git
 cd aero-api-example
 uv sync
 ```
@@ -68,22 +68,33 @@ curl -X POST 'https://login.cimenviro.com/auth/realms/cimenviro/protocol/openid-
 uv run scripts/get_sites.py
 ```
 
-It prints one line per site:
+It prints the active sites, one per line, minus any assigned to the client named
+in `EXCLUDE_CLIENT_NAME` (the bucket buildings get parked in when they leave the
+platform — change the name to match your customer):
 
 ```
-   411  Example Plaza
-   415  Example Tower
+     3  99 Elizabeth St
+    16  193 North Quay
+    20  6-7 Eden Park Drive
 ```
 
-Two steps happen inside: `get_access_token()` posts the offline token back as
-`grant_type=refresh_token` to get a short-lived access token, then `get_sites()`
-sends that as `Authorization: Bearer …` to `GET /sites`. Access tokens last 24 h
-on this realm, so a script mints a fresh one each run rather than storing it.
+Four steps, one function each, all commented in the file:
 
-To call another endpoint, copy `get_sites()` and change the path — the bearer
-header is the only auth involved. `api-reference.md` records what has been
-verified about `GET /sites` itself: which filters work, how paging behaves, and
-which ones the server ignores instead of rejecting.
+1. `get_access_token()` posts the offline token back as `grant_type=refresh_token`
+   and gets a short-lived access token. These last 24 h on this realm, so the
+   script mints one per run rather than storing it.
+2. `get_client_id()` calls `GET /users/clients?client_name=…`. Sites carry client
+   *ids* only, and the users service is the only place names live.
+3. `get_all_sites()` pages through `GET /sites?is_active=true` by cursor — the
+   cursor is the last `site_id` seen, and `order_by_site_id=true` is required
+   alongside it. A short page means the end.
+4. Sites whose `clients` list holds that id are dropped; the rest are printed.
+
+To call another endpoint, copy `api_get()` and change the path — the bearer header
+is the only auth involved. Field names come from the live Swagger JSON, linked at
+the top of `api-reference.md`; don't guess them. That file also records what the
+schema doesn't say: `limit=25` is what `GET /sites` reliably answers (bigger pages
+time out), array filters must repeat the key, and `site_name` is exact-match.
 
 ## Windows
 
